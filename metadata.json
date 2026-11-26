@@ -1,0 +1,6 @@
+{
+  "name": "Daily Log",
+  "description": "Private, offline-first personal recovery tracker with end-to-end encryption, local TOTP 2FA, craving urge-surfing, and recovery milestones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

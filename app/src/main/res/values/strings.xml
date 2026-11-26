@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Daily Log</string>
+    <string name="dashboard_title">QuitWeed</string>
+    <string name="notification_channel_name">Daily Log reminders</string>
+    <string name="notification_channel_desc">Quiet personal check-in and milestone reminders</string>
+    <string name="notification_checkin_body">Take a quiet moment for your daily entry.</string>
+    <string name="notification_weekly_body">Your weekly summary is ready to review.</string>
+    <string name="notification_peak_body">A quiet heads-up before your usual busy hour.</string>
+    <string name="notification_milestone_body">You reached a new personal milestone.</string>
+</resources>
