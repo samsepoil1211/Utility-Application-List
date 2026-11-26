@@ -41,8 +41,10 @@ import com.example.viewmodel.ResetStep
 fun SignInScreen(
     route: AppRoute.SignIn,
     state: DailyLogUiState,
+    canUseFingerprint: Boolean,
     onBack: () -> Unit,
     onPasswordSubmit: (String, String) -> Unit,
+    onFingerprintSignIn: () -> Unit,
     onTwoFactorSubmit: (String) -> Unit,
     onForgotPassword: () -> Unit,
     onCreateAccount: () -> Unit,
@@ -114,13 +116,24 @@ fun SignInScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
             AmberPrimaryButton(
-                text = "Continue",
+                text = "Sign in with password",
                 loading = state.isCryptoBusy,
                 enabled = !lockedOut && identifier.isNotBlank() && password.isNotBlank(),
                 onClick = { onPasswordSubmit(identifier, password) },
                 icon = InstrumentIcons.Lock,
                 modifier = Modifier.testTag("signin_submit_button")
             )
+
+            if (canUseFingerprint) {
+                Spacer(modifier = Modifier.height(10.dp))
+                QuietOutlineButton(
+                    text = "Sign in with fingerprint",
+                    enabled = !lockedOut && !state.isCryptoBusy,
+                    icon = InstrumentIcons.Fingerprint,
+                    onClick = onFingerprintSignIn,
+                    modifier = Modifier.testTag("signin_fingerprint_button")
+                )
+            }
 
             Spacer(modifier = Modifier.height(14.dp))
             Row(
@@ -165,7 +178,9 @@ fun SignInScreen(
 @Composable
 fun QuickUnlockScreen(
     state: DailyLogUiState,
+    canUseFingerprint: Boolean,
     onUnlock: (String) -> Unit,
+    onFingerprintUnlock: () -> Unit,
     onFullSignIn: () -> Unit,
     onForgotPassword: () -> Unit,
     onClearError: () -> Unit
@@ -177,7 +192,11 @@ fun QuickUnlockScreen(
 
     AuthScaffold(
         title = "Vault locked",
-        subtitle = "Locked automatically after inactivity. Enter your password to continue.",
+        subtitle = if (canUseFingerprint) {
+            "Locked automatically after inactivity. Unlock with your fingerprint or password."
+        } else {
+            "Locked automatically after inactivity. Enter your password to continue."
+        },
         onBack = null
     ) {
         if (lockedOut) {
@@ -221,13 +240,24 @@ fun QuickUnlockScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
         AmberPrimaryButton(
-            text = "Unlock",
+            text = "Unlock with password",
             loading = state.isCryptoBusy,
             enabled = !lockedOut && password.isNotBlank(),
             onClick = { onUnlock(password) },
             icon = InstrumentIcons.Lock,
             modifier = Modifier.testTag("quick_unlock_button")
         )
+
+        if (canUseFingerprint) {
+            Spacer(modifier = Modifier.height(10.dp))
+            QuietOutlineButton(
+                text = "Unlock with fingerprint",
+                enabled = !lockedOut && !state.isCryptoBusy,
+                icon = InstrumentIcons.Fingerprint,
+                onClick = onFingerprintUnlock,
+                modifier = Modifier.testTag("quick_unlock_fingerprint_button")
+            )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
         Row(
@@ -271,7 +301,7 @@ fun ResetPasswordScreen(
 
     AuthScaffold(
         title = "Reset password",
-        subtitle = "Recover access using your 24-character recovery key and 2FA code. Your encryption key will be re-wrapped without re-encrypting history.",
+        subtitle = "Recover access using your 24-character recovery key (and 2FA code if enabled). Your encryption key will be re-wrapped without re-encrypting history.",
         onBack = onBack
     ) {
         when (route.step) {

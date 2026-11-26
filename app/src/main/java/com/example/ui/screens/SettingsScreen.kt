@@ -80,6 +80,8 @@ private enum class SettingsDialogKind {
 fun SettingsScreen(
     state: DailyLogUiState,
     viewModel: DailyLogViewModel,
+    biometricAvailability: com.example.crypto.BiometricKeyManager.Availability,
+    onToggleBiometric: (Boolean) -> Unit,
     onEditQuitPlan: () -> Unit
 ) {
     val colors = LocalInstrumentColors.current
@@ -176,8 +178,25 @@ fun SettingsScreen(
                 )
             }
 
-            // 2. Security & 2FA
-            InstrumentSectionPanel(title = "Security & 2FA") {
+            // 2. Security & optional 2FA
+            InstrumentSectionPanel(title = "Security") {
+                val bioSubtitle = when (biometricAvailability) {
+                    com.example.crypto.BiometricKeyManager.Availability.Available ->
+                        "Sign in or unlock with your fingerprint using hardware Keystore"
+                    com.example.crypto.BiometricKeyManager.Availability.NoneEnrolled ->
+                        "Add a fingerprint in Android system settings to enable"
+                    com.example.crypto.BiometricKeyManager.Availability.Unavailable ->
+                        "Biometric hardware unavailable on this device"
+                }
+                InstrumentToggleRow(
+                    title = "Fingerprint login",
+                    subtitle = bioSubtitle,
+                    checked = state.biometricEnabled,
+                    enabled = biometricAvailability == com.example.crypto.BiometricKeyManager.Availability.Available || state.biometricEnabled,
+                    onCheckedChange = onToggleBiometric,
+                    modifier = Modifier.testTag("settings_fingerprint_toggle")
+                )
+                HairlineDivider()
                 InstrumentActionRow(
                     title = "Change password",
                     subtitle = "Re-wraps your 256-bit data key without re-encrypting history",
@@ -189,33 +208,36 @@ fun SettingsScreen(
                 )
                 HairlineDivider()
                 InstrumentActionRow(
-                    title = "Two-factor backup codes",
-                    subtitle = if (payload.totpEnabled) "Single-use hashed codes stored inside vault" else "Enable authenticator to generate codes",
-                    valueText = if (payload.totpEnabled) "$remainingBackupCount left" else "Off",
-                    valueColor = if (remainingBackupCount <= 2 && payload.totpEnabled) colors.coral else colors.muted,
-                    onClick = {
-                        dialogError = null
-                        if (payload.totpEnabled) {
-                            activeDialog = SettingsDialogKind.RegenerateBackupCodes
-                        } else {
-                            activeDialog = SettingsDialogKind.ChangeAuthenticatorReAuth
-                        }
-                    }
-                )
-                HairlineDivider()
-                InstrumentActionRow(
-                    title = if (payload.totpEnabled) "Change authenticator" else "Enable authenticator (TOTP)",
-                    subtitle = "Generate a fresh offline QR code and setup key",
+                    title = if (payload.totpEnabled) "Change authenticator (2FA)" else "Two-factor authentication (optional)",
+                    subtitle = if (payload.totpEnabled) {
+                        "Active · generate a fresh offline QR code and setup key"
+                    } else {
+                        "Off · optionally add offline TOTP authenticator protection"
+                    },
+                    valueText = if (payload.totpEnabled) "On" else "Off",
+                    valueColor = if (payload.totpEnabled) colors.mint else colors.muted,
                     onClick = {
                         dialogError = null
                         activeDialog = SettingsDialogKind.ChangeAuthenticatorReAuth
-                    }
+                    },
+                    modifier = Modifier.testTag("settings_2fa_row")
                 )
                 if (payload.totpEnabled) {
                     HairlineDivider()
                     InstrumentActionRow(
+                        title = "Two-factor backup codes",
+                        subtitle = "Single-use hashed codes stored inside vault",
+                        valueText = "$remainingBackupCount left",
+                        valueColor = if (remainingBackupCount <= 2) colors.coral else colors.muted,
+                        onClick = {
+                            dialogError = null
+                            activeDialog = SettingsDialogKind.RegenerateBackupCodes
+                        }
+                    )
+                    HairlineDivider()
+                    InstrumentActionRow(
                         title = "Disable 2FA",
-                        subtitle = "Reduces protection on sign-in and password reset",
+                        subtitle = "Return to password or fingerprint sign-in only",
                         danger = true,
                         onClick = {
                             dialogError = null
@@ -365,7 +387,11 @@ fun SettingsScreen(
             InstrumentSectionPanel(title = "Session & data") {
                 InstrumentActionRow(
                     title = "Sign out",
-                    subtitle = "Locks vault and requires full sign-in with 2FA next time",
+                    subtitle = if (payload.totpEnabled) {
+                        "Locks vault and requires full sign-in with 2FA next time"
+                    } else {
+                        "Locks vault and returns to the sign-in screen"
+                    },
                     onClick = { viewModel.signOut() },
                     modifier = Modifier.testTag("settings_sign_out_row")
                 )

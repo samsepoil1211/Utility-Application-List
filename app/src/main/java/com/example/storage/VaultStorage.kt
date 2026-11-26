@@ -118,6 +118,30 @@ class VaultStorage(context: Context) {
         prefs.edit().putBoolean(KEY_REDUCE_MOTION, reduce).apply()
     }
 
+    fun hasBiometricDekWrap(): Boolean =
+        !prefs.getString(KEY_BIO_IV, null).isNullOrBlank() &&
+            !prefs.getString(KEY_BIO_CIPHERTEXT, null).isNullOrBlank()
+
+    fun readBiometricDekWrap(): Pair<String, String>? {
+        val iv = prefs.getString(KEY_BIO_IV, null)
+        val ct = prefs.getString(KEY_BIO_CIPHERTEXT, null)
+        return if (!iv.isNullOrBlank() && !ct.isNullOrBlank()) iv to ct else null
+    }
+
+    fun writeBiometricDekWrap(ivB64: String, ciphertextB64: String) {
+        prefs.edit()
+            .putString(KEY_BIO_IV, ivB64)
+            .putString(KEY_BIO_CIPHERTEXT, ciphertextB64)
+            .apply()
+    }
+
+    fun clearBiometricDekWrap() {
+        prefs.edit()
+            .remove(KEY_BIO_IV)
+            .remove(KEY_BIO_CIPHERTEXT)
+            .apply()
+    }
+
     fun eraseAllLocalData() {
         if (vaultFile.exists()) {
             // Overwrite with zeros before unlinking
@@ -144,5 +168,7 @@ class VaultStorage(context: Context) {
         private const val KEY_DRIVE_LAST_BACKUP = "drive_last_backup"
         private const val KEY_THEME_DARK = "ui_theme_dark"
         private const val KEY_REDUCE_MOTION = "ui_reduce_motion"
+        private const val KEY_BIO_IV = "bio_dek_iv"
+        private const val KEY_BIO_CIPHERTEXT = "bio_dek_ciphertext"
     }
 }

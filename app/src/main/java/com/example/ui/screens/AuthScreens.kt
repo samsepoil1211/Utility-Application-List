@@ -140,7 +140,7 @@ fun WelcomeScreen(
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Offline-first personal log protected with local end-to-end encryption and two-factor authentication.",
+                    text = "Offline-first personal log protected with local end-to-end encryption, fingerprint unlock, and optional two-factor authentication.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.muted,
                     textAlign = TextAlign.Center,
@@ -610,10 +610,16 @@ fun RecoveryKeyScreen(
             )
         }
 
+        if (state.isCryptoBusy) {
+            Spacer(modifier = Modifier.height(12.dp))
+            KeyDerivationBanner(label = state.cryptoBusyLabel)
+        }
+
         Spacer(modifier = Modifier.height(20.dp))
 
         AmberPrimaryButton(
-            text = "Continue to 2FA setup",
+            text = "Create encrypted vault",
+            loading = state.isCryptoBusy,
             onClick = { onConfirm(entered.toMap()) },
             modifier = Modifier.testTag("recovery_confirm_button")
         )

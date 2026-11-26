@@ -425,4 +425,34 @@ object InstrumentIcons {
             }
         }
     }
+
+    val Fingerprint: ImageVector by lazy {
+        icon("Fingerprint") {
+            stroke {
+                moveTo(12f, 11.5f)
+                verticalLineTo(15f)
+                curveTo(12f, 17f, 11.2f, 18.6f, 10f, 19.8f)
+            }
+            stroke {
+                moveTo(9f, 11.5f)
+                arcTo(3f, 3f, 0f, false, true, 15f, 11.5f)
+                verticalLineTo(14.5f)
+                curveTo(15f, 16.5f, 14.5f, 18.2f, 13.6f, 19.6f)
+            }
+            stroke {
+                moveTo(6.2f, 12.2f)
+                arcTo(5.8f, 5.8f, 0f, false, true, 17.8f, 11.5f)
+                verticalLineTo(13.8f)
+                curveTo(17.8f, 15.6f, 17.4f, 17.2f, 16.7f, 18.5f)
+            }
+            stroke {
+                moveTo(6.5f, 15.2f)
+                curveTo(6.9f, 16.7f, 7.2f, 17.8f, 6.7f, 19f)
+            }
+            stroke {
+                moveTo(4.2f, 9.8f)
+                arcTo(8.3f, 8.3f, 0f, false, true, 19.6f, 9.2f)
+            }
+        }
+    }
 }

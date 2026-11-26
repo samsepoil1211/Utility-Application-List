@@ -48,6 +48,7 @@ import com.example.model.Currencies
 import com.example.model.QuitPlan
 import com.example.ui.components.AmberPrimaryButton
 import com.example.ui.components.InstrumentTextField
+import com.example.ui.components.InstrumentToggleRow
 import com.example.ui.theme.LocalInstrumentColors
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -63,6 +64,9 @@ import java.util.Locale
 fun OnboardingScreen(
     initialPlan: QuitPlan,
     isEditingExisting: Boolean = false,
+    biometricAvailable: Boolean = false,
+    biometricEnabled: Boolean = false,
+    onToggleBiometric: ((Boolean) -> Unit)? = null,
     onCancelEdit: (() -> Unit)? = null,
     onSavePlan: (QuitPlan) -> Unit
 ) {
@@ -269,6 +273,24 @@ fun OnboardingScreen(
                 minLines = 3,
                 modifier = Modifier.testTag("onboarding_reason_input")
             )
+
+            if (!isEditingExisting && biometricAvailable && onToggleBiometric != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.panel, RoundedCornerShape(14.dp))
+                        .border(1.dp, colors.line, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                ) {
+                    InstrumentToggleRow(
+                        title = "Enable fingerprint login",
+                        subtitle = "Sign in or unlock with your fingerprint instead of typing your password",
+                        checked = biometricEnabled,
+                        onCheckedChange = onToggleBiometric,
+                        modifier = Modifier.testTag("onboarding_fingerprint_toggle")
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 

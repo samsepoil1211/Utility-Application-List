@@ -1,10 +1,10 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.crypto.BiometricKeyManager
 import com.example.model.ComputedStats
 import com.example.model.QuitPlan
 import com.example.ui.components.InstrumentBottomBar
@@ -59,14 +60,14 @@ import com.example.ui.theme.LocalReduceMotion
 import com.example.viewmodel.AppRoute
 import com.example.viewmodel.DailyLogViewModel
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val viewModel: DailyLogViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            DailyLogApp(viewModel = viewModel)
+            DailyLogApp(activity = this, viewModel = viewModel)
         }
     }
 
@@ -82,11 +83,51 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun DailyLogApp(viewModel: DailyLogViewModel) {
+fun DailyLogApp(activity: FragmentActivity, viewModel: DailyLogViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val systemReduceMotion = remember(context) { InstrumentMotion.isSystemReducedMotion(context) }
     val effectiveReduceMotion = state.reduceMotion || systemReduceMotion
+    val biometricAvailability = remember(context, state.route) {
+        BiometricKeyManager.checkAvailability(context)
+    }
+    val canUseFingerprint = state.biometricEnabled &&
+        state.hasLocalVault &&
+        biometricAvailability == BiometricKeyManager.Availability.Available
+
+    val triggerEnableBiometric: (Boolean) -> Unit = { enable ->
+        if (!enable) {
+            viewModel.disableBiometricUnlock()
+        } else {
+            val cipher = viewModel.prepareBiometricEnableCipher()
+            if (cipher != null) {
+                BiometricKeyManager.authenticate(
+                    activity = activity,
+                    title = BiometricKeyManager.defaultPromptTitle(),
+                    subtitle = "Confirm your fingerprint to enable biometric unlock",
+                    negativeButtonText = "Cancel",
+                    cipher = cipher,
+                    onSuccess = { authed -> viewModel.completeBiometricEnable(authed) },
+                    onError = { err -> viewModel.showToast(err, isError = true) }
+                )
+            }
+        }
+    }
+
+    val triggerUnlockWithBiometric: (Boolean) -> Unit = { isQuickUnlock ->
+        val cipher = viewModel.prepareBiometricUnlockCipher()
+        if (cipher != null) {
+            BiometricKeyManager.authenticate(
+                activity = activity,
+                title = BiometricKeyManager.defaultPromptTitle(),
+                subtitle = if (isQuickUnlock) "Unlock your encrypted vault" else "Sign in to your encrypted vault",
+                negativeButtonText = "Use password",
+                cipher = cipher,
+                onSuccess = { authed -> viewModel.unlockWithBiometricCipher(authed, isQuickUnlock) },
+                onError = { err -> viewModel.showToast(err, isError = true) }
+            )
+        }
+    }
 
     var showCravingSos by remember { mutableStateOf(false) }
     var showEditQuitPlan by remember { mutableStateOf(false) }
@@ -131,17 +172,18 @@ fun DailyLogApp(viewModel: DailyLogViewModel) {
                         route = route,
                         state = state,
                         onBack = { viewModel.navigateToSignUp() },
-                        onConfirm = { viewModel.confirmRecoveryKeyAndProceedTo2Fa(it) },
+                        onConfirm = { viewModel.confirmRecoveryKeyAndFinishSignUp(it) },
                         onShowToast = { viewModel.showToast(it) }
                     )
                 }
 
                 is AppRoute.Setup2Fa -> {
+                    // Legacy/optional route safeguard
                     Setup2FaScreen(
                         route = route,
                         state = state,
                         onBack = { viewModel.navigateToSignUp() },
-                        onVerifyAndFinish = { viewModel.verify2FaAndFinishSignUp(it) },
+                        onVerifyAndFinish = { },
                         onShowToast = { viewModel.showToast(it) }
                     )
                 }
@@ -150,8 +192,10 @@ fun DailyLogApp(viewModel: DailyLogViewModel) {
                     SignInScreen(
                         route = route,
                         state = state,
+                        canUseFingerprint = canUseFingerprint,
                         onBack = { viewModel.navigateToWelcome() },
                         onPasswordSubmit = { id, pw -> viewModel.signInPasswordStep(id, pw) },
+                        onFingerprintSignIn = { triggerUnlockWithBiometric(false) },
                         onTwoFactorSubmit = { code -> viewModel.signInTwoFactorStep(code) },
                         onForgotPassword = { viewModel.navigateToResetPassword() },
                         onCreateAccount = { viewModel.navigateToSignUp() },
@@ -162,7 +206,9 @@ fun DailyLogApp(viewModel: DailyLogViewModel) {
                 is AppRoute.QuickUnlock -> {
                     QuickUnlockScreen(
                         state = state,
+                        canUseFingerprint = canUseFingerprint,
                         onUnlock = { pw -> viewModel.quickUnlockWithPassword(pw) },
+                        onFingerprintUnlock = { triggerUnlockWithBiometric(true) },
                         onFullSignIn = { viewModel.navigateToSignIn() },
                         onForgotPassword = { viewModel.navigateToResetPassword() },
                         onClearError = { viewModel.clearAuthError() }
@@ -185,6 +231,9 @@ fun DailyLogApp(viewModel: DailyLogViewModel) {
                     OnboardingScreen(
                         initialPlan = state.payload?.quitPlan ?: QuitPlan(),
                         isEditingExisting = false,
+                        biometricAvailable = biometricAvailability == BiometricKeyManager.Availability.Available,
+                        biometricEnabled = state.biometricEnabled,
+                        onToggleBiometric = triggerEnableBiometric,
                         onSavePlan = { plan -> viewModel.saveQuitPlan(plan, fromOnboarding = true) }
                     )
                 }
@@ -225,6 +274,8 @@ fun DailyLogApp(viewModel: DailyLogViewModel) {
                                 DashboardShell(
                                     state = state,
                                     viewModel = viewModel,
+                                    biometricAvailability = biometricAvailability,
+                                    onToggleBiometric = triggerEnableBiometric,
                                     onOpenCravingSos = { showCravingSos = true },
                                     onEditQuitPlan = { showEditQuitPlan = true }
                                 )
@@ -262,6 +313,8 @@ fun DailyLogApp(viewModel: DailyLogViewModel) {
 private fun DashboardShell(
     state: com.example.viewmodel.DailyLogUiState,
     viewModel: DailyLogViewModel,
+    biometricAvailability: BiometricKeyManager.Availability,
+    onToggleBiometric: (Boolean) -> Unit,
     onOpenCravingSos: () -> Unit,
     onEditQuitPlan: () -> Unit
 ) {
@@ -328,6 +381,8 @@ private fun DashboardShell(
                     MainTab.Settings -> SettingsScreen(
                         state = state,
                         viewModel = viewModel,
+                        biometricAvailability = biometricAvailability,
+                        onToggleBiometric = onToggleBiometric,
                         onEditQuitPlan = onEditQuitPlan
                     )
                 }

@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.auth.AuthValidator
 import com.example.auth.OnlineVerifier
 import com.example.config.AppConfig
+import com.example.crypto.BiometricKeyManager
 import com.example.crypto.VaultCrypto
+import javax.crypto.Cipher
 import com.example.drive.DriveSyncManager
 import com.example.model.AccountHeader
 import com.example.model.CheckInLog
@@ -89,7 +91,8 @@ data class DailyLogUiState(
     val newlyReachedMilestone: RecoveryMilestone? = null,
     val pulsingMilestoneIndex: Int? = null,
     val newlyGeneratedBackupCodes: List<String>? = null,
-    val pendingTotpReconfig: Triple<String, String, List<String>>? = null // secret, uri, backupCodes
+    val pendingTotpReconfig: Triple<String, String, List<String>>? = null, // secret, uri, backupCodes
+    val biometricEnabled: Boolean = false
 )
 
 class DailyLogViewModel(application: Application) : AndroidViewModel(application) {
@@ -131,6 +134,7 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
         val driveMeta = storage.readDriveMetadata()
         val darkTheme = storage.readCachedThemeDark()
         val reduceMotion = storage.readCachedReduceMotion()
+        val bioEnabled = envelope != null && storage.hasBiometricDekWrap()
 
         val startRoute = if (envelope != null) AppRoute.SignIn(false) else AppRoute.Welcome
 
@@ -142,7 +146,8 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
                 darkTheme = darkTheme,
                 reduceMotion = reduceMotion,
                 lockoutState = lockout,
-                driveMeta = driveMeta
+                driveMeta = driveMeta,
+                biometricEnabled = bioEnabled
             )
         }
         startLockoutTickerIfNeeded(lockout)
@@ -169,7 +174,8 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
         wipeAllSensitiveRam()
         val header = storage.readEnvelope()?.header
         val last2fa = storage.readLastFull2faMs()
-        val expired2fa = (System.currentTimeMillis() - last2fa) >= AppConfig.FULL_2FA_MAX_AGE_MS
+        val expired2fa = (header?.totpEnabled == true) &&
+            (System.currentTimeMillis() - last2fa) >= AppConfig.FULL_2FA_MAX_AGE_MS
         val nextRoute = when {
             header == null -> AppRoute.Welcome
             forceFull2fa || expired2fa -> AppRoute.SignIn(false)
@@ -286,7 +292,7 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun confirmRecoveryKeyAndProceedTo2Fa(enteredGroups: Map<Int, String>) {
+    fun confirmRecoveryKeyAndFinishSignUp(enteredGroups: Map<Int, String>) {
         val route = _uiState.value.route as? AppRoute.ShowRecoveryKey ?: return
         val expectedGroups = route.recoveryKey.split("-")
         for (idx in route.confirmGroupIndices) {
@@ -301,38 +307,15 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
         }
 
         val id = pendingSignUpIdentifier ?: return
-        val secret = TotpEngine.generateSecret()
-        val uri = TotpEngine.buildOtpAuthUri(identifier = id, secret = secret)
-        val (plainCodes, hashes) = TotpEngine.generateBackupCodes(10)
-
-        // Hold hashes temporarily in pendingPayload until TOTP verification succeeds
-        pendingPayload = VaultPayload(
-            onboardingComplete = false,
-            totpSecret = secret,
-            totpEnabled = true,
-            backupCodes = hashes
-        )
-
-        _uiState.update {
-            it.copy(
-                route = AppRoute.Setup2Fa(secret = secret, otpAuthUri = uri, backupCodes = plainCodes),
-                authError = null
-            )
-        }
-    }
-
-    fun verify2FaAndFinishSignUp(code: String) {
-        val route = _uiState.value.route as? AppRoute.Setup2Fa ?: return
-        if (!TotpEngine.verifyCode(route.secret, code)) {
-            _uiState.update { it.copy(authError = "That 6-digit code did not match. Check your authenticator clock and try again.") }
-            return
-        }
-
-        val id = pendingSignUpIdentifier ?: return
         val idType = pendingSignUpIdentifierType ?: "email"
         val passChars = pendingSignUpPasswordChars ?: return
         val recoveryKey = pendingSignUpRecoveryKey ?: return
-        val initialPayload = pendingPayload ?: return
+        val initialPayload = VaultPayload(
+            onboardingComplete = false,
+            totpSecret = "",
+            totpEnabled = false,
+            backupCodes = emptyList()
+        )
 
         viewModelScope.launch {
             _uiState.update {
@@ -374,12 +357,14 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
                         createdAt = nowIso,
                         passwordWrap = pwWrap,
                         recoveryWrap = recWrap,
-                        totpEnabled = true,
+                        totpEnabled = false,
                         onlineVerified = false
                     )
                     val payloadJson = storage.serializePayload(initialPayload)
                     val encrypted = VaultCrypto.encryptVault(payloadJson, newDek, 1, nowIso)
                     val env = VaultFileEnvelope(AppConfig.VAULT_SCHEMA_VERSION, header, encrypted)
+                    BiometricKeyManager.deleteKey()
+                    storage.clearBiometricDekWrap()
                     storage.writeEnvelope(env)
                     storage.resetLockout()
                     storage.writeLastFull2faMs(System.currentTimeMillis())
@@ -393,6 +378,7 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
                     it.copy(
                         isCryptoBusy = false,
                         hasLocalVault = true,
+                        biometricEnabled = false,
                         accountHeader = envelope.header,
                         payload = initialPayload,
                         stats = StatsAnalytics.compute(initialPayload),
@@ -549,9 +535,9 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
-        // Enforce 24-hour full 2FA policy
+        // Enforce 24-hour full 2FA policy ONLY when optional 2FA is enabled
         val last2fa = storage.readLastFull2faMs()
-        if ((System.currentTimeMillis() - last2fa) >= AppConfig.FULL_2FA_MAX_AGE_MS) {
+        if (header.totpEnabled && (System.currentTimeMillis() - last2fa) >= AppConfig.FULL_2FA_MAX_AGE_MS) {
             _uiState.update {
                 it.copy(
                     route = AppRoute.SignIn(false),
@@ -602,6 +588,116 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
                 }
             } else {
                 completeUnlock(result.first, header, result.second, markFull2fa = false)
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // FINGERPRINT / BIOMETRIC UNLOCK (HARDWARE-BACKED ANDROID KEYSTORE)
+    // -------------------------------------------------------------------------
+
+    fun prepareBiometricEnableCipher(): Cipher? {
+        if (unlockedDek == null) return null
+        return try {
+            BiometricKeyManager.createEncryptCipher()
+        } catch (_: Exception) {
+            showToast("Biometric hardware is unavailable on this device.", isError = true)
+            null
+        }
+    }
+
+    fun completeBiometricEnable(authedCipher: Cipher) {
+        val dek = unlockedDek ?: return
+        try {
+            val wrappedBytes = authedCipher.doFinal(dek)
+            val ivB64 = VaultCrypto.encodeB64(authedCipher.iv)
+            val ctB64 = VaultCrypto.encodeB64(wrappedBytes)
+            storage.writeBiometricDekWrap(ivB64, ctB64)
+            _uiState.update { it.copy(biometricEnabled = true) }
+            showToast("Fingerprint unlock enabled on this device.")
+        } catch (_: Exception) {
+            BiometricKeyManager.deleteKey()
+            storage.clearBiometricDekWrap()
+            showToast("Could not enable fingerprint unlock.", isError = true)
+        }
+    }
+
+    fun disableBiometricUnlock(silent: Boolean = false) {
+        BiometricKeyManager.deleteKey()
+        storage.clearBiometricDekWrap()
+        _uiState.update { it.copy(biometricEnabled = false) }
+        if (!silent) {
+            showToast("Fingerprint unlock disabled.")
+        }
+    }
+
+    fun prepareBiometricUnlockCipher(): Cipher? {
+        if (isLockedOutNow()) {
+            _uiState.update { it.copy(authError = "Too many attempts. Wait for the timer before trying again.") }
+            return null
+        }
+        val wrapped = storage.readBiometricDekWrap() ?: run {
+            _uiState.update { it.copy(biometricEnabled = false) }
+            return null
+        }
+        val cipher = BiometricKeyManager.createDecryptCipher(wrapped.first)
+        if (cipher == null) {
+            disableBiometricUnlock(silent = true)
+            _uiState.update {
+                it.copy(authError = "Fingerprint key was invalidated after device biometric changes. Unlock with your password and re-enable fingerprint in Settings.")
+            }
+        }
+        return cipher
+    }
+
+    fun unlockWithBiometricCipher(authedCipher: Cipher, isQuickUnlock: Boolean) {
+        val envelope = storage.readEnvelope() ?: return
+        val wrapped = storage.readBiometricDekWrap() ?: return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isCryptoBusy = true, cryptoBusyLabel = "Decrypting vault...", authError = null)
+            }
+            val result = withContext(Dispatchers.Default) {
+                try {
+                    val ct = VaultCrypto.decodeB64(wrapped.second)
+                    val dek = authedCipher.doFinal(ct)
+                    val json = VaultCrypto.decryptVault(envelope.vault, dek)
+                    val payload = storage.deserializePayload(json)
+                    if (payload != null) dek to payload else {
+                        VaultCrypto.wipe(dek)
+                        null
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            if (result == null) {
+                disableBiometricUnlock(silent = true)
+                _uiState.update {
+                    it.copy(
+                        isCryptoBusy = false,
+                        authError = "Fingerprint unlock failed. Please sign in with your password."
+                    )
+                }
+                return@launch
+            }
+
+            val (dek, payload) = result
+            if (!isQuickUnlock && payload.totpEnabled && payload.totpSecret.isNotBlank()) {
+                VaultCrypto.wipe(pendingDek)
+                pendingDek = dek
+                pendingHeader = envelope.header
+                pendingPayload = payload
+                _uiState.update {
+                    it.copy(
+                        isCryptoBusy = false,
+                        route = AppRoute.SignIn(requireTwoFactorStep = true),
+                        authError = null
+                    )
+                }
+            } else {
+                completeUnlock(dek, envelope.header, payload, markFull2fa = !isQuickUnlock)
             }
         }
     }
@@ -1146,12 +1242,14 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
             }
             wipeAllSensitiveRam()
             driveAccessTokenInMemory = null
+            BiometricKeyManager.deleteKey()
             reminderScheduler.cancelAll()
             storage.eraseAllLocalData()
             _uiState.update {
                 DailyLogUiState(
                     route = AppRoute.Welcome,
                     hasLocalVault = false,
+                    biometricEnabled = false,
                     darkTheme = true,
                     reduceMotion = false
                 )
@@ -1176,17 +1274,20 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
             showToast("File is not a valid ${AppConfig.DRIVE_BACKUP_FILENAME} encrypted backup.", isError = true)
             return
         }
+        BiometricKeyManager.deleteKey()
+        storage.clearBiometricDekWrap()
         storage.writeEnvelope(envelope)
         storage.resetLockout()
         _uiState.update {
             it.copy(
                 hasLocalVault = true,
+                biometricEnabled = false,
                 accountHeader = envelope.header,
                 route = AppRoute.SignIn(false),
                 authError = null
             )
         }
-        showToast("Encrypted backup loaded. Sign in with your password and 2FA to decrypt.")
+        showToast("Encrypted backup loaded. Sign in with your password to decrypt.")
     }
 
     fun connectDriveWithToken(accessToken: String, email: String?) {
@@ -1268,6 +1369,8 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
             _uiState.update { it.copy(isDriveSyncing = true, authError = null) }
             when (val res = driveManager.downloadEncryptedVault(accessToken.trim())) {
                 is DriveSyncManager.SyncResult.Downloaded -> {
+                    BiometricKeyManager.deleteKey()
+                    storage.clearBiometricDekWrap()
                     storage.writeEnvelope(res.envelope)
                     storage.writeDriveMetadata(null, res.fileId, res.envelope.vault.updatedAt)
                     driveAccessTokenInMemory = accessToken.trim()
@@ -1275,12 +1378,13 @@ class DailyLogViewModel(application: Application) : AndroidViewModel(application
                         it.copy(
                             isDriveSyncing = false,
                             hasLocalVault = true,
+                            biometricEnabled = false,
                             accountHeader = res.envelope.header,
                             route = AppRoute.SignIn(false),
                             driveMeta = it.driveMeta.copy(fileId = res.fileId, lastBackupIso = res.envelope.vault.updatedAt)
                         )
                     }
-                    showToast("Backup downloaded. Sign in with password and 2FA (or recovery key).")
+                    showToast("Backup downloaded. Sign in with your password or recovery key.")
                 }
                 is DriveSyncManager.SyncResult.NotFound -> {
                     _uiState.update { it.copy(isDriveSyncing = false, authError = res.message) }
